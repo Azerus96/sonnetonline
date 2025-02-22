@@ -36,19 +36,26 @@ def chat(message, history, file_obj=None):
         )
 
         full_response = ""
+        messages = [] # Инициализируем messages здесь
         for chunk in response_stream:
             full_response += chunk.content[0].text
-            messages = [(history[i]["content"], history[i+1]["content"] if i+1 < len(history) else "") for i in range(0, len(history), 2)]
-            if len(messages) > 0:
-                messages[-1] = (messages[-1][0], full_response)
-            else:
-                messages = [(message, full_response)]
+
+            # Формируем messages ПРАВИЛЬНО:
+            messages = []
+            for i in range(0, len(history)):
+                if history[i]["role"] == "user":
+                    # Добавляем пару (user_message, bot_message)
+                    # Если есть следующее сообщение от бота, используем его; иначе - full_response (или "")
+                    bot_message = history[i+1]["content"] if i+1 < len(history) and history[i+1]["role"] == "assistant" else full_response
+                    messages.append((history[i]["content"], bot_message))
+
             yield "", messages
 
         history.append({"role": "assistant", "content": full_response})
 
     except Exception as e:
         yield f"Error: {e}", history
+
 
 def clear_history():
     return None, []
@@ -66,17 +73,15 @@ with gr.Blocks(title="Claude Chat", theme=gr.themes.Soft()) as demo:
         )
         file_upload = gr.File(label="Upload PDF", file_types=[".pdf"], scale=1)
 
-    with gr.Row(): # Добавляем еще одну строку для кнопок
-        send_button = gr.Button("Send") # Добавляем кнопку Send
+    with gr.Row():
+        send_button = gr.Button("Send")
         clear = gr.ClearButton([msg, chatbot, file_upload])
         clear_hist_button = gr.Button("Clear History")
 
-    # Обработчики событий
     msg.submit(chat, [msg, chatbot, file_upload], [msg, chatbot])
     file_upload.upload(chat, [msg, chatbot, file_upload], [msg, chatbot])
     clear_hist_button.click(clear_history, [], [msg, chatbot, file_upload])
-    send_button.click(chat, [msg, chatbot, file_upload], [msg, chatbot]) # Добавляем обработчик для кнопки Send
-
+    send_button.click(chat, [msg, chatbot, file_upload], [msg, chatbot])
 
 if __name__ == "__main__":
     demo.queue()
