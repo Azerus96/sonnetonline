@@ -4,12 +4,12 @@ import anthropic
 from dotenv import load_dotenv
 import io
 import pypdf
-import json  # Для красивого вывода JSON
+import json
 
 load_dotenv()
 
 def chat(message, history, file_obj=None):
-    print("=== НОВОЕ СООБЩЕНИЕ ===")  # Лог: начало нового сообщения
+    print("=== НОВОЕ СООБЩЕНИЕ ===")
     print(f"Входное сообщение: {message}")
 
     history = history or []
@@ -17,27 +17,27 @@ def chat(message, history, file_obj=None):
     print(f"История (после добавления сообщения пользователя):\n{json.dumps(history, indent=2)}")
 
     if file_obj:
-        print(f"Загружен файл: {file_obj.name}, тип: {file_obj.type}, размер: {len(file_obj.data)} байт")
+        print(f"Загружен файл: {file_obj.name}")  # Лог: имя файла
         try:
+            # Чтение PDF, если файл - PDF
             if file_obj.name.lower().endswith(".pdf"):
-                pdf_reader = pypdf.PdfReader(io.BytesIO(file_obj.data))
-                pdf_text = ""
-                for page in pdf_reader.pages:
-                    pdf_text += page.extract_text()
+                with open(file_obj.name, "rb") as f: # Открываем как файл
+                    pdf_reader = pypdf.PdfReader(f)
+                    pdf_text = ""
+                    for page in pdf_reader.pages:
+                        pdf_text += page.extract_text()
                 history[-1]["content"] += f"\n\nСодержимое PDF:\n{pdf_text}"
                 print("PDF успешно прочитан.")
             else:
-                gr.Warning(f"Файл {file_obj.name} не является PDF.  Поддерживаются только PDF.") # Предупреждение в UI
+                gr.Warning(f"Файл {file_obj.name} не является PDF. Поддерживаются только PDF.")
                 history[-1]["content"] += f"\n\nФайл {file_obj.name} прикреплен, но не обработан (поддерживаются только PDF)."
         except Exception as e:
-            gr.Error(f"Ошибка при обработке файла: {e}")  # Ошибка в UI
-            print(f"Ошибка при обработке файла: {e}")  # Лог ошибки
+            gr.Error(f"Ошибка при обработке файла: {e}")
+            print(f"Ошибка при обработке файла: {e}")
             history[-1]["content"] += f"\n\nОшибка при обработке файла: {e}"
 
     try:
         client = anthropic.Anthropic()
-
-        # Формируем запрос к API (для логов)
         request_payload = {
             "model": "claude-3-5-sonnet-20241022",
             "max_tokens": 8192,
@@ -53,7 +53,7 @@ def chat(message, history, file_obj=None):
         full_response = ""
         messages = []
         for chunk in response_stream:
-            print(f"Получен chunk от API: {chunk}")  # Лог: каждый chunk
+            print(f"Получен chunk от API: {chunk}")
             full_response += chunk.content[0].text
 
             messages = []
@@ -61,29 +61,29 @@ def chat(message, history, file_obj=None):
                 if history[i]["role"] == "user":
                     bot_message = history[i+1]["content"] if i+1 < len(history) and history[i+1]["role"] == "assistant" else full_response
                     messages.append((history[i]["content"], bot_message))
-            print(f"messages перед yield (внутри цикла): {messages}") # Лог: messages
+            print(f"messages перед yield (внутри цикла): {messages}")
             yield "", messages
 
         history.append({"role": "assistant", "content": full_response})
-        print(f"Полный ответ от API: {full_response}") # Лог: полный ответ
+        print(f"Полный ответ от API: {full_response}")
 
-        # Обновляем messages ПОСЛЕ добавления полного ответа:
         messages = []
         for i in range(0, len(history)):
             if history[i]["role"] == "user":
                 bot_message = history[i + 1]["content"] if i + 1 < len(history) and history[i + 1]["role"] == "assistant" else ""
                 messages.append((history[i]["content"], bot_message))
-        print(f"messages перед yield (после цикла): {messages}") # Лог: messages
+        print(f"messages перед yield (после цикла): {messages}")
         yield "", messages
 
     except Exception as e:
-        gr.Error(f"Ошибка API Claude: {e}")  # Ошибка в UI
-        print(f"Ошибка API Claude: {e}")  # Лог ошибки
+        gr.Error(f"Ошибка API Claude: {e}")
+        print(f"Ошибка API Claude: {e}")
         yield f"Error: {e}", history
 
 def clear_history():
     print("=== ОЧИСТКА ИСТОРИИ ===")
-    return None, []
+    # Должны вернуть столько же значений сколько и принимают
+    return None, [], None
 
 with gr.Blocks(title="Claude Chat", theme=gr.themes.Soft()) as demo:
     gr.Markdown("# Chat with Claude 3.5 Sonnet (with PDF support)")
@@ -103,11 +103,11 @@ with gr.Blocks(title="Claude Chat", theme=gr.themes.Soft()) as demo:
         clear = gr.ClearButton([msg, chatbot, file_upload])
         clear_hist_button = gr.Button("Clear History")
 
-    msg.submit(chat, [msg, chatbot, file_upload], [msg, chatbot], queue=False) # queue=False убрал
-    file_upload.upload(chat, [msg, chatbot, file_upload], [msg, chatbot], queue=False) # queue=False убрал
-    clear_hist_button.click(clear_history, [], [msg, chatbot, file_upload], queue=False) # queue=False убрал
-    send_button.click(chat, [msg, chatbot, file_upload], [msg, chatbot], queue=False) # queue=False убрал
-    demo.load(None, [], [chatbot], queue=False) # Добавил для очистки при запуске
+    msg.submit(chat, [msg, chatbot, file_upload], [msg, chatbot])
+    file_upload.upload(chat, [msg, chatbot, file_upload], [msg, chatbot])
+    clear_hist_button.click(clear_history, [], [msg, chatbot, file_upload])
+    send_button.click(chat, [msg, chatbot, file_upload], [msg, chatbot])
+    demo.load(None, [], [chatbot])
 
 if __name__ == "__main__":
     demo.queue()
