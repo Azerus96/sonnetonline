@@ -2,32 +2,25 @@ import gradio as gr
 import os
 import anthropic
 from dotenv import load_dotenv
-import io  # Для работы с байтовыми потоками
-import pypdf  # Для чтения PDF
+import io
+import pypdf
 
 load_dotenv()
 
-# Функция для обработки сообщений и файлов
 def chat(message, history, file_obj=None):
     history = history or []
     history.append({"role": "user", "content": message})
 
     if file_obj:
-        # Обработка файла, если он есть
         try:
-            # Чтение PDF файла
             if file_obj.name.lower().endswith(".pdf"):
                 pdf_reader = pypdf.PdfReader(io.BytesIO(file_obj.data))
                 pdf_text = ""
                 for page in pdf_reader.pages:
                     pdf_text += page.extract_text()
-
-                # Добавляем содержимое PDF к сообщению пользователя
                 history[-1]["content"] += f"\n\nСодержимое PDF:\n{pdf_text}"
             else:
-                # Для других типов файлов можно добавить свою логику
                 history[-1]["content"] += f"\n\nФайл {file_obj.name} прикреплен, но не обработан (поддерживаются только PDF)."
-
         except Exception as e:
             history[-1]["content"] += f"\n\nОшибка при обработке файла: {e}"
 
@@ -36,8 +29,8 @@ def chat(message, history, file_obj=None):
         response_stream = client.messages.create(
             model="claude-3-5-sonnet-20241022",
             max_tokens=8192,
-            temperature=0,  # Устанавливаем температуру в 0
-            system="You are a helpful assistant. You can analyze PDF documents and answer questions about them. You can also write code and format it appropriately using Markdown. If you write code, put it in a code block with the language specified.",
+            temperature=0,
+            system="You are a helpful assistant. You can analyze PDF documents...",
             messages=history,
             stream=True
         )
@@ -60,27 +53,30 @@ def chat(message, history, file_obj=None):
 def clear_history():
     return None, []
 
-# Создаем Gradio-интерфейс
 with gr.Blocks(title="Claude Chat", theme=gr.themes.Soft()) as demo:
     gr.Markdown("# Chat with Claude 3.5 Sonnet (with PDF support)")
     chatbot = gr.Chatbot(label="Claude 3.5 Sonnet", value=[], height=550)
-    with gr.Row():  # Размещаем элементы в строку
+    with gr.Row():
         msg = gr.Textbox(
             label="Your Message",
             placeholder="Type your message here, or upload a PDF...",
             autofocus=True,
             lines=2,
-            scale=4,  # Занимает 4/5 ширины
+            scale=4,
         )
-        file_upload = gr.File(label="Upload PDF", file_types=[".pdf"], scale=1)  # Занимает 1/5
+        file_upload = gr.File(label="Upload PDF", file_types=[".pdf"], scale=1)
 
-    clear = gr.ClearButton([msg, chatbot, file_upload])
-    clear_hist_button = gr.Button("Clear History")
+    with gr.Row(): # Добавляем еще одну строку для кнопок
+        send_button = gr.Button("Send") # Добавляем кнопку Send
+        clear = gr.ClearButton([msg, chatbot, file_upload])
+        clear_hist_button = gr.Button("Clear History")
 
     # Обработчики событий
     msg.submit(chat, [msg, chatbot, file_upload], [msg, chatbot])
-    file_upload.upload(chat, [msg, chatbot, file_upload], [msg, chatbot])  # Добавили обработчик
+    file_upload.upload(chat, [msg, chatbot, file_upload], [msg, chatbot])
     clear_hist_button.click(clear_history, [], [msg, chatbot, file_upload])
+    send_button.click(chat, [msg, chatbot, file_upload], [msg, chatbot]) # Добавляем обработчик для кнопки Send
+
 
 if __name__ == "__main__":
     demo.queue()
