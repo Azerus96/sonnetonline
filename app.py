@@ -8,13 +8,16 @@ import json
 
 load_dotenv()
 
-def analyze_review(review, history, file_obj=None):
-    # 1. Подготовка истории (как в нашем чат-боте)
-    history = history or []
-    history.append({"role": "user", "content": review})
+def chat(message, history, file_obj=None):
+    print("=== НОВОЕ СООБЩЕНИЕ ===")
+    print(f"Входное сообщение: {message}")
 
-    # 2. Обработка файла (если есть) - как в нашем чат-боте
+    history = history or []
+    history.append({"role": "user", "content": message})
+    print(f"История (после добавления сообщения пользователя):\n{json.dumps(history, indent=2)}")
+
     if file_obj:
+        print(f"Загружен файл: {file_obj.name}")
         try:
             if file_obj.name.lower().endswith(".pdf"):
                 with open(file_obj.name, "rb") as f:
@@ -23,88 +26,80 @@ def analyze_review(review, history, file_obj=None):
                     for page in pdf_reader.pages:
                         pdf_text += page.extract_text()
                 history[-1]["content"] += f"\n\nСодержимое PDF:\n{pdf_text}"
+                print("PDF успешно прочитан.")
             else:
                 gr.Warning(f"Файл {file_obj.name} не является PDF. Поддерживаются только PDF.")
                 history[-1]["content"] += f"\n\nФайл {file_obj.name} прикреплен, но не обработан (поддерживаются только PDF)."
         except Exception as e:
             gr.Error(f"Ошибка при обработке файла: {e}")
+            print(f"Ошибка при обработке файла: {e}")
             history[-1]["content"] += f"\n\nОшибка при обработке файла: {e}"
-
-    # 3. Формируем запрос к Claude (используем system prompt для анализа)
-    system_prompt = """
-    You are a helpful assistant that specializes in analyzing customer reviews.
-    Analyze the provided review and determine:
-    1. Sentiment: Is the review positive, negative, or neutral?
-    2. Key points: Summarize the key points of the review.
-    3. (Optional) Provide a score (1-5 stars) based on the sentiment.
-
-    Format your response as follows:
-
-    Sentiment: [Positive/Negative/Neutral]
-    Key points:
-    - [Point 1]
-    - [Point 2]
-    - [Point 3]
-    ...
-    (Optional) Score: [1-5]
-    """
 
     try:
         client = anthropic.Anthropic()
-        response_stream = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=1024,  # Уменьшил max_tokens, т.к. это анализ, а не длинный чат
-            temperature=0,
-            system=system_prompt,
-            messages=history,
-            stream=True
-        )
+        request_payload = {
+            "model": "claude-3-5-sonnet-20241022",
+            "max_tokens": 8192,
+            "temperature": 0,
+            "system": "You are a helpful assistant. You can analyze PDF documents...",
+            "messages": history,
+            "stream": True
+        }
+        print(f"Запрос к API Claude:\n{json.dumps(request_payload, indent=2)}")
+
+        response_stream = client.messages.create(**request_payload)
 
         full_response = ""
-        messages = []
         for chunk in response_stream:
+            print(f"Получен chunk от API: {chunk}")
             full_response += chunk.content[0].text
-            messages = []
-            for i in range(0, len(history)):
-                if history[i]["role"] == "user":
-                    bot_message = history[i+1]["content"] if i+1 < len(history) and history[i+1]["role"] == "assistant" else full_response
-                    messages.append((history[i]["content"], bot_message))
-            yield "", messages
 
+        # Добавляем ПОЛНЫЙ ОТВЕТ в историю *ПЕРЕД* формированием messages
         history.append({"role": "assistant", "content": full_response})
+        print(f"Полный ответ от API: {full_response}")
+
+        # Формируем messages ОДИН РАЗ, после получения ВСЕГО ответа:
         messages = []
-        for i in range(0, len(history) - 1, 2):
-            messages.append((history[i]["content"], history[i+1]["content"]))
-        yield "", messages
+        for i in range(0, len(history) - 1, 2):  # Идем с шагом 2
+            user_message = history[i]["content"]
+            bot_message = history[i+1]["content"]
+            messages.append((user_message, bot_message))
+
+        print(f"messages перед yield: {messages}")
+        yield "", messages  # yield ОДИН РАЗ
 
     except Exception as e:
         gr.Error(f"Ошибка API Claude: {e}")
-        yield f"Error: {e}", history
+        print(f"Ошибка API Claude: {e}")
+        yield f"Error: {e}", []  # Возвращаем пустой список messages при ошибке
+
 
 def clear_history():
+    print("=== ОЧИСТКА ИСТОРИИ ===")
     return None, [], None
 
-with gr.Blocks(title="Review Analyzer", theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# Analyze Customer Reviews with Claude 3.5 Sonnet")
-    chatbot = gr.Chatbot(label="Analysis Result", value=[], height=400) # Уменьшил высоту
+with gr.Blocks(title="Claude Chat", theme=gr.themes.Soft()) as demo:
+    gr.Markdown("# Chat with Claude 3.5 Sonnet (with PDF support)")
+    chatbot = gr.Chatbot(label="Claude 3.5 Sonnet", value=[], height=550)
     with gr.Row():
-        review_input = gr.Textbox(
-            label="Customer Review",
-            placeholder="Enter a customer review here, or upload a PDF...",
-            lines=5,
+        msg = gr.Textbox(
+            label="Your Message",
+            placeholder="Type your message here, or upload a PDF...",
+            autofocus=True,
+            lines=2,
             scale=4,
         )
         file_upload = gr.File(label="Upload PDF", file_types=[".pdf"], scale=1)
 
     with gr.Row():
-        analyze_button = gr.Button("Analyze")
-        clear = gr.ClearButton([review_input, chatbot, file_upload])
+        send_button = gr.Button("Send")
+        clear = gr.ClearButton([msg, chatbot, file_upload])
         clear_hist_button = gr.Button("Clear History")
 
-    review_input.submit(analyze_review, [review_input, chatbot, file_upload], [review_input, chatbot])
-    file_upload.upload(analyze_review, [review_input, chatbot, file_upload], [review_input, chatbot])
-    clear_hist_button.click(clear_history, [], [review_input, chatbot, file_upload])
-    analyze_button.click(analyze_review, [review_input, chatbot, file_upload], [review_input, chatbot]) # Кнопка Analyze
+    msg.submit(chat, [msg, chatbot, file_upload], [msg, chatbot])
+    file_upload.upload(chat, [msg, chatbot, file_upload], [msg, chatbot])
+    clear_hist_button.click(clear_history, [], [msg, chatbot, file_upload])
+    send_button.click(chat, [msg, chatbot, file_upload], [msg, chatbot])
     demo.load(None, [], [chatbot])
 
 if __name__ == "__main__":
